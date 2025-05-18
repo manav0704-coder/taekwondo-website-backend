@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Maharashtra Taekwondo Federation Backend API
 
 This is the backend API for the Maharashtra Taekwondo Federation website built with Node.js, Express, and MongoDB.
@@ -124,3 +125,6 @@ For more information about the technologies used, check out:
 - [Express.js documentation](https://expressjs.com/)
 - [MongoDB documentation](https://docs.mongodb.com/)
 - [Mongoose documentation](https://mongoosejs.com/) 
+=======
+# taekwondo-website-backend
+>>>>>>> 5edbbb9bd290aa57c159eb7c237a0e44d240398c
