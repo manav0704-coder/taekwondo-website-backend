@@ -3,10 +3,17 @@
   "version": "1.0.0",
   "description": "Maharashtra Taekwondo Federation API",
   "main": "index.js",
+  "engines": {
+    "node": ">=18.x",
+    "npm": ">=9.x"
+  },
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "check-deploy": "node check-deploy-ready.js",
+    "test-mongodb": "node test-local-mongodb.js",
+    "setup-local-db": "node setup-local-db.js"
   },
   "keywords": [
     "taekwondo",
@@ -27,8 +34,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
-    "nodemailer": "^7.0.3",
-    "react-scripts": "^5.0.1"
+    "nodemailer": "^7.0.3"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

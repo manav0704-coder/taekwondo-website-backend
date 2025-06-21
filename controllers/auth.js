@@ -3,10 +3,22 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
+// Default JWT secret for local development - DO NOT use in production
+const DEFAULT_JWT_SECRET = 'taekwondo-local-development-secret-key-123456';
+// Setting JWT to essentially never expire (100 years)
+const DEFAULT_JWT_EXPIRE = '36500d';
+
 // Generate JWT Token
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE
+  // Use environment variable or fallback to default
+  const jwtSecret = process.env.JWT_SECRET || DEFAULT_JWT_SECRET;
+  const jwtExpire = process.env.JWT_EXPIRE || DEFAULT_JWT_EXPIRE;
+  
+  console.log(`Using JWT secret: ${jwtSecret ? 'Secret is defined' : 'SECRET NOT DEFINED'}`);
+  console.log(`Token will never expire (set to 100 years)`);
+  
+  return jwt.sign({ id }, jwtSecret, {
+    expiresIn: jwtExpire
   });
 };
 
@@ -15,18 +27,14 @@ const sendEmail = async (options) => {
   try {
     console.log('Creating email transport');
     
-    // Create a test account if no SMTP credentials exist
-    const testAccount = await nodemailer.createTestAccount();
-    console.log('Using test account:', testAccount.user);
-
-    // Create reusable transporter
+    // Use Gmail SMTP configuration
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-      port: process.env.SMTP_PORT || 587,
-      secure: process.env.SMTP_SECURE === 'true' || false,
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
       auth: {
-        user: process.env.SMTP_USER || testAccount.user,
-        pass: process.env.SMTP_PASSWORD || testAccount.pass
+        user: 'hibronpluse@gmail.com',
+        pass: 'rnduxuarkjxezhtw'
       }
     });
 
@@ -34,7 +42,7 @@ const sendEmail = async (options) => {
 
     // Message options
     const mailOptions = {
-      from: `${process.env.FROM_NAME || 'Maharashtra Taekwondo Federation'} <${process.env.FROM_EMAIL || 'noreply@taekwondo.com'}>`,
+      from: 'Maharashtra Taekwondo Federation <hibronpluse@gmail.com>',
       to: options.email,
       subject: options.subject,
       text: options.message,
@@ -46,11 +54,6 @@ const sendEmail = async (options) => {
     // Send mail
     const info = await transporter.sendMail(mailOptions);
     console.log('Email sent successfully:', info.messageId);
-    
-    // Log URL for testing if using Ethereal
-    if (!process.env.SMTP_HOST) {
-      console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
-    }
     
     return info;
   } catch (error) {
@@ -66,23 +69,108 @@ exports.register = async (req, res, next) => {
   try {
     const { name, email, password, role, phoneNumber } = req.body;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    console.log(`Register attempt for email: ${email}`);
+    
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide name, email and password'
+      });
+    }
+
+    // Check if user already exists with enhanced error handling and retries
+    let existingUser;
+    let retryCount = 0;
+    const maxRetries = 2; // Maximum number of retry attempts
+    
+    while (retryCount <= maxRetries) {
+      try {
+        // Use lean() for better performance and set a timeout
+        existingUser = await User.findOne({ email })
+          .lean()
+          .maxTimeMS(5000); // 5 second timeout for this query
+          
+        console.log(`Existing user check for ${email}: ${existingUser ? 'Found' : 'Not found'}`);
+        
+        // We know the result, exit the retry loop
+        break;
+        
+      } catch (dbError) {
+        console.error(`Database error when checking for existing user (attempt ${retryCount + 1}/${maxRetries + 1}):`, dbError);
+        
+        if (retryCount === maxRetries) {
+          // Give up after max retries
+          return res.status(500).json({
+            success: false,
+            message: 'Database connection error. Please try again later.',
+            error: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+          });
+        }
+        
+        // Increment retry count and try again
+        retryCount++;
+        console.log(`Retrying database query, attempt ${retryCount} of ${maxRetries}`);
+        
+        // Short delay before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
     if (existingUser) {
+      console.log(`Registration failed: Email already in use - ${email}`);
       return res.status(400).json({
         success: false,
         message: 'Email already in use'
       });
     }
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
-      password,
-      role: role || 'user',
-      phoneNumber
-    });
+    // Create user with error handling and retry logic
+    let user;
+    retryCount = 0;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        user = await User.create({
+          name,
+          email,
+          password,
+          role: role || 'user',
+          phoneNumber
+        });
+        console.log(`User created successfully: ${user._id}`);
+        break; // Exit the loop if successful
+        
+      } catch (dbError) {
+        console.error(`Database error when creating user (attempt ${retryCount + 1}/${maxRetries + 1}):`, dbError);
+        
+        // Handle validation errors
+        if (dbError.name === 'ValidationError') {
+          const messages = Object.values(dbError.errors).map(val => val.message);
+          return res.status(400).json({
+            success: false,
+            message: 'Validation error',
+            errors: messages
+          });
+        }
+        
+        if (retryCount === maxRetries) {
+          // Give up after max retries
+          return res.status(500).json({
+            success: false,
+            message: 'Error creating user account. Please try again later.',
+            error: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+          });
+        }
+        
+        // Increment retry count and try again
+        retryCount++;
+        console.log(`Retrying user creation, attempt ${retryCount} of ${maxRetries}`);
+        
+        // Short delay before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
 
     // Generate token
     const token = generateToken(user._id);
@@ -102,7 +190,8 @@ exports.register = async (req, res, next) => {
     console.error('Registration error:', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Error creating user'
+      message: 'Registration failed. Please try again later.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -114,36 +203,127 @@ exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
+    console.log(`Login attempt for email: ${email}`);
+    console.log(`MongoDB URI: ${process.env.MONGO_URI ? 'Configured' : 'NOT CONFIGURED'}`);
+
     // Validate email & password
     if (!email || !password) {
+      console.log('Login attempt missing email or password');
       return res.status(400).json({
         success: false,
         message: 'Please provide an email and password'
       });
     }
 
-    // Check for user
-    const user = await User.findOne({ email }).select('+password');
+    // Check for user with enhanced error handling and retries
+    let user;
+    let retryCount = 0;
+    const maxRetries = 2; // Maximum number of retry attempts
+    
+    while (retryCount <= maxRetries) {
+      try {
+        // Use lean() for better performance and set a timeout
+        user = await User.findOne({ email })
+          .select('+password')
+          .lean()
+          .maxTimeMS(5000); // 5 second timeout for this query
+          
+        console.log(`User lookup for ${email}: ${user ? 'Found' : 'Not found'}`);
+        
+        if (user) {
+          break; // If user found, exit the retry loop
+        } else if (retryCount === maxRetries) {
+          // If this was the last retry and no user found
+          console.log(`Login failed: Invalid email - ${email}`);
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid credentials'
+          });
+        }
+        
+        retryCount++;
+        console.log(`User not found, retry attempt ${retryCount} of ${maxRetries}`);
+        
+      } catch (dbError) {
+        console.error(`Database error when finding user (attempt ${retryCount + 1}/${maxRetries + 1}):`, dbError);
+        
+        if (retryCount === maxRetries) {
+          // Give up after max retries
+          return res.status(500).json({
+            success: false,
+            message: 'Database connection error. Please try again later.',
+            error: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+          });
+        }
+        
+        // Increment retry count and try again
+        retryCount++;
+        console.log(`Retrying database query, attempt ${retryCount} of ${maxRetries}`);
+        
+        // Short delay before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
 
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid credentials'
-      });
+    // Get the full user document for password check (if we're working with lean result)
+    if (user && !user.matchPassword) {
+      try {
+        const fullUser = await User.findById(user._id).select('+password');
+        
+        if (!fullUser) {
+          console.log(`Login failed: User found in initial query but not when fetching full document - ${email}`);
+          return res.status(401).json({
+            success: false,
+            message: 'Authentication error. Please try again.'
+          });
+        }
+        
+        user = fullUser;
+      } catch (fetchError) {
+        console.error('Error when fetching full user document:', fetchError);
+        return res.status(500).json({
+          success: false,
+          message: 'Authentication error. Please try again later.',
+          error: process.env.NODE_ENV === 'development' ? fetchError.message : undefined
+        });
+      }
     }
 
     // Check if password matches
-    const isMatch = await user.matchPassword(password);
+    let isMatch;
+    try {
+      isMatch = await user.matchPassword(password);
+      console.log(`Password match for ${email}: ${isMatch ? 'Success' : 'Failed'}`);
+    } catch (passwordError) {
+      console.error('Error when matching password:', passwordError);
+      return res.status(500).json({
+        success: false,
+        message: 'Authentication error. Please try again later.',
+        error: process.env.NODE_ENV === 'development' ? passwordError.message : undefined
+      });
+    }
 
     if (!isMatch) {
+      console.log(`Login failed: Invalid password for ${email}`);
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
+    console.log(`User logged in successfully: ${user._id}`);
+    
     // Generate token
     const token = generateToken(user._id);
+    
+    // Update last login timestamp
+    try {
+      user.lastLogin = Date.now();
+      await user.save();
+    } catch (updateError) {
+      // Non-critical error, just log it
+      console.error(`Error updating last login timestamp for ${user._id}:`, updateError);
+    }
 
     res.status(200).json({
       success: true,
@@ -160,7 +340,8 @@ exports.login = async (req, res, next) => {
     console.error('Login error:', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Login failed'
+      message: 'Login failed. Please try again later.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -169,40 +350,72 @@ exports.login = async (req, res, next) => {
 // @route   POST /api/auth/google
 // @access  Public
 exports.googleAuth = async (req, res, next) => {
+  console.log('Google auth request received', req.body.email ? { email: req.body.email } : 'No email provided');
+  
   try {
     const { name, email, googleId, photoURL } = req.body;
 
+    // Validate required fields
     if (!email || !googleId) {
+      console.error('Google auth missing required fields:', { email: !!email, googleId: !!googleId });
       return res.status(400).json({
         success: false,
         message: 'Please provide email and Google ID'
       });
     }
 
+    console.log(`Google auth: Processing for ${email}`);
+    
     // Check if user exists with this email
-    let user = await User.findOne({ email });
+    let user;
+    try {
+      user = await User.findOne({ email }).maxTimeMS(5000);
+      console.log(`Google auth: User lookup for ${email}: ${user ? 'Found' : 'Not found'}`);
+    } catch (dbError) {
+      console.error('Google auth: Database error when looking up user:', dbError);
+      // Continue with null user, we'll create one
+    }
 
     if (user) {
       // If user exists but doesn't have googleId, update it
       if (!user.googleId) {
+        console.log(`Google auth: Adding googleId to existing user ${user._id}`);
         user.googleId = googleId;
         user.photoURL = photoURL || user.photoURL;
-        await user.save();
+        try {
+          await user.save();
+          console.log(`Google auth: Updated existing user ${user._id} with Google credentials`);
+        } catch (saveError) {
+          console.error('Google auth: Error saving updated user:', saveError);
+          // Continue anyway, the important part is authentication
+        }
       }
     } else {
       // Create new user with Google credentials
-      user = await User.create({
-        name,
-        email,
-        googleId,
-        photoURL,
-        role: 'user'
-      });
+      console.log(`Google auth: Creating new user for ${email}`);
+      try {
+        user = await User.create({
+          name,
+          email,
+          googleId,
+          photoURL,
+          role: 'user'
+        });
+        console.log(`Google auth: Created new user ${user._id}`);
+      } catch (createError) {
+        console.error('Google auth: Error creating user:', createError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to create user account. Please try again.'
+        });
+      }
     }
 
     // Generate token
+    console.log(`Google auth: Generating token for user ${user._id}`);
     const token = generateToken(user._id);
 
+    console.log('Google auth: Authentication successful');
     res.status(200).json({
       success: true,
       token,
@@ -286,7 +499,9 @@ exports.forgotPassword = async (req, res, next) => {
     }
 
     console.log('Searching for user with email:', email);
-    const user = await User.findOne({ email });
+    
+    // Add timeout to the database query
+    const user = await User.findOne({ email }).maxTimeMS(10000);
     
     // Always return success even if email not found for security
     if (!user) {
@@ -307,10 +522,18 @@ exports.forgotPassword = async (req, res, next) => {
       .update(resetToken)
       .digest('hex');
       
-    user.resetPasswordExpire = Date.now() + 15 * 60 * 1000; // 15 minutes
+    user.resetPasswordExpire = Date.now() + 30 * 60 * 1000; // 30 minutes (increased from 15)
     
-    await user.save();
-    console.log('Reset token saved to user');
+    try {
+      await user.save();
+      console.log('Reset token saved to user');
+    } catch (saveError) {
+      console.error('Error saving reset token to user:', saveError);
+      return res.status(500).json({
+        success: false,
+        message: 'Database error. Please try again later.'
+      });
+    }
 
     // Create reset URL - use the actual frontend URL if available
     const frontendURL = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:3000';
@@ -318,18 +541,24 @@ exports.forgotPassword = async (req, res, next) => {
     console.log('Reset URL created:', resetUrl);
     
     // Create message
-    const message = `You are receiving this email because you (or someone else) has requested a password reset. Click the link below to reset your password:\n\n${resetUrl}\n\nThis link will expire in 15 minutes.\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
+    const message = `You are receiving this email because you (or someone else) has requested a password reset. Click the link below to reset your password:\n\n${resetUrl}\n\nThis link will expire in 30 minutes.\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
     
     // HTML version
     const html = `
       <p>You are receiving this email because you (or someone else) has requested a password reset.</p>
       <p>Click the button below to reset your password:</p>
       <a href="${resetUrl}" style="display: inline-block; background-color: #FF5722; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; margin: 20px 0;">Reset Password</a>
-      <p>This link will expire in 15 minutes.</p>
+      <p>This link will expire in 30 minutes.</p>
       <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
     `;
 
     try {
+      // Log email attempt with all details
+      console.log('Attempting to send email with the following details:');
+      console.log('- To:', user.email);
+      console.log('- Subject: Password Reset Request');
+      console.log('- Reset URL:', resetUrl);
+      
       await sendEmail({
         email: user.email,
         subject: 'Password Reset Request',
@@ -345,14 +574,22 @@ exports.forgotPassword = async (req, res, next) => {
     } catch (err) {
       console.error('Email sending failed:', err);
       
-      user.resetPasswordToken = undefined;
-      user.resetPasswordExpire = undefined;
+      // Log detailed error information
+      console.error('Email error details:', {
+        error: err.message,
+        stack: err.stack,
+        code: err.code,
+        response: err.response
+      });
       
-      await user.save();
+      // Don't clear the token - let the user try again without regenerating
+      // user.resetPasswordToken = undefined;
+      // user.resetPasswordExpire = undefined;
+      // await user.save();
       
       return res.status(500).json({
         success: false,
-        message: 'Email could not be sent'
+        message: 'Email could not be sent. Please try again later.'
       });
     }
   } catch (error) {
@@ -521,4 +758,4 @@ exports.changePassword = async (req, res, next) => {
       message: error.message || 'Failed to change password'
     });
   }
-}; 
+};

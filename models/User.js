@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
+// Create a robust user schema with validation
 const UserSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -12,6 +13,8 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please add an email'],
     unique: true,
+    lowercase: true, // Store email in lowercase for better uniqueness
+    trim: true,
     match: [
       /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/,
       'Please add a valid email'
@@ -67,6 +70,9 @@ const UserSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now
+  },
+  lastLogin: {
+    type: Date
   }
 });
 
@@ -78,20 +84,33 @@ UserSchema.pre('save', async function(next) {
   }
 
   try {
+    console.log('Hashing password for user:', this.email);
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {
+    console.error('Password hashing error:', error);
     next(error);
   }
 });
 
 // Match user entered password to hashed password in database
 UserSchema.methods.matchPassword = async function(enteredPassword) {
-  if (!this.password) {
-    return false;
+  try {
+    if (!this.password) {
+      console.log('No password found for user:', this.email);
+      return false;
+    }
+    const isMatch = await bcrypt.compare(enteredPassword, this.password);
+    console.log(`Password match result for ${this.email}: ${isMatch}`);
+    return isMatch;
+  } catch (error) {
+    console.error('Error comparing passwords:', error);
+    throw error;
   }
-  return await bcrypt.compare(enteredPassword, this.password);
 };
+
+// Create a compound index on email and googleId for better query performance
+UserSchema.index({ email: 1, googleId: 1 });
 
 module.exports = mongoose.model('User', UserSchema); 

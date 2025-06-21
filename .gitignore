@@ -1,2 +1,11 @@
 node_modules/
-.env
+
+# Email configuration - Using Gmail
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-actual-gmail@gmail.com
+SMTP_PASSWORD=your-gmail-app-password
+FROM_EMAIL=your-actual-gmail@gmail.com
+FROM_NAME=Maharashtra Taekwondo Federation
+

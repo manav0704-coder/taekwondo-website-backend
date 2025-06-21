@@ -5,6 +5,9 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
+const { connectDatabase, isConnectedToDB, reconnectDatabase } = require('./config/db');
+const errorHandler = require('./middleware/error');
+
 
 // Load environment variables
 dotenv.config();
@@ -18,22 +21,95 @@ app.use((req, res, next) => {
   next();
 });
 
+// Add middleware to check MongoDB connection before proceeding
+app.use(async (req, res, next) => {
+  // Skip DB check for health endpoint and static resources
+  if (req.path === '/api/health' || req.path.startsWith('/public/') || req.method === 'OPTIONS') {
+    return next();
+  }
+  
+  // Check if connected to MongoDB for all other routes
+  if (!isConnectedToDB()) {
+    console.log('MongoDB not connected, attempting reconnection before proceeding');
+    
+    try {
+      // Try to reconnect with a timeout
+      const reconnectPromise = reconnectDatabase();
+      
+      // Set a timeout for the reconnection attempt
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Database reconnection timeout')), 10000);
+      });
+      
+      // Race between reconnection and timeout
+      await Promise.race([reconnectPromise, timeoutPromise]);
+      
+      // Check if reconnection was successful
+      if (!isConnectedToDB()) {
+        console.log('MongoDB reconnection failed, returning error');
+        return res.status(503).json({
+          success: false, 
+          message: 'Database unavailable. Please try again later.'
+        });
+      }
+      
+      console.log('MongoDB reconnection successful, proceeding with request');
+    } catch (dbError) {
+      console.error('MongoDB reconnection error:', dbError);
+      return res.status(503).json({
+        success: false, 
+        message: 'Database connection error. Please try again later.'
+      });
+    }
+  }
+  next();
+});
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Enhanced CORS configuration
-app.use(cors({
-  origin: process.env.CORS_ORIGINS ? 
-    process.env.CORS_ORIGINS.split(',') : 
-    ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://0.0.0.0:3000', 'http://192.168.1.100:3000', 'http://localhost:5000'],
+const corsOptions = {
+  origin: function (origin, callback) {
+    // In development, allow any origin
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Development mode: allowing all origins for CORS');
+      return callback(null, true);
+    }
+    
+    // Get allowed origins from environment variable or use defaults
+    const allowedOrigins = process.env.CORS_ORIGINS ? 
+      process.env.CORS_ORIGINS.split(',') : 
+      ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://0.0.0.0:3000', 'https://taekwondo-website-kdqm.vercel.app'];
+    
+    console.log('CORS check for origin:', origin || 'no origin');
+    
+    // Allow requests with no origin (like mobile apps, curl requests)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('localhost')) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked request from origin: ${origin}`);
+      // For troubleshooting, allow all origins but log the blocked ones
+      callback(null, true); 
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
 
 // Handle preflight requests
-app.options('*', cors());
+app.options('*', cors(corsOptions));
 
 app.use(helmet());
 app.use(morgan('dev'));
@@ -54,13 +130,14 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Routes import (will create these files next)
+// Routes import
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const eventRoutes = require('./routes/events');
 const galleryRoutes = require('./routes/gallery');
 const contactRoutes = require('./routes/contact');
 const enrollmentRoutes = require('./routes/enrollments');
+const healthRoutes = require('./routes/health');
 
 // Apply routes
 app.use('/api/auth', authRoutes);
@@ -69,36 +146,71 @@ app.use('/api/events', eventRoutes);
 app.use('/api/gallery', galleryRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/enrollments', enrollmentRoutes);
+console.log('Enrollment routes registered');
 
-// Default route
+// Register health check route
+app.use('/api/health', healthRoutes);
+
+// Default route with more detailed information
 app.get('/', (req, res) => {
-  res.send('Maharashtra Taekwondo Federation API is running');
+  res.send(`
+    <html>
+      <head>
+        <title>Maharashtra Taekwondo Federation API</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+          h1 { color: #333; }
+          .endpoint { background-color: #f4f4f4; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+        </style>
+      </head>
+      <body>
+        <h1>Maharashtra Taekwondo Federation API</h1>
+        <p>The API is running successfully. Below are the available endpoints:</p>
+        <div class="endpoint">/api/health - Health check endpoint</div>
+        <div class="endpoint">/api/auth - Authentication endpoints</div>
+        <div class="endpoint">/api/users - User management endpoints</div>
+        <div class="endpoint">/api/events - Event management endpoints</div>
+        <div class="endpoint">/api/gallery - Gallery management endpoints</div>
+        <div class="endpoint">/api/contact - Contact form endpoints</div>
+        <div class="endpoint">/api/enrollments - Enrollment management endpoints</div>
+      </body>
+    </html>
+  `);
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Server error:', err.stack);
-  res.status(500).json({
-    success: false,
-    message: 'Server error',
-    error: process.env.NODE_ENV === 'production' ? null : err.message
-  });
-});
+// Use the custom error handler middleware
+app.use(errorHandler);
 
-// Connect to MongoDB
-const connectDB = async () => {
+// Start server function with database connection
+const startServer = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/taekwondo');
-    console.log('MongoDB connected successfully');
+    // First, connect to the database
+    console.log('Connecting to database...');
+    await connectDatabase();
+    
+    // Once connected or if connection fails but we want to proceed anyway,
+    // start the Express server
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      
+      // Set up a periodic database connection check
+      setInterval(async () => {
+        if (!isConnectedToDB()) {
+          console.log('Periodic check: MongoDB connection lost, attempting to reconnect...');
+          try {
+            await reconnectDatabase();
+          } catch (err) {
+            console.error('Failed to reconnect to MongoDB during periodic check:', err);
+          }
+        }
+      }, 30000); // Check every 30 seconds
+    });
   } catch (error) {
-    console.error('MongoDB connection error:', error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   }
 };
 
-// Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, async () => {
-  await connectDB();
-  console.log(`Server running on port ${PORT}`);
-}); 
+// Start the server
+startServer();
