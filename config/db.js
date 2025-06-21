@@ -5,9 +5,6 @@ let isConnected = false;
 let connectionRetries = 0;
 const MAX_RETRIES = 5;
 
-// Update to use MongoDB Atlas connection string with improved connection parameters
-const FALLBACK_MONGO_URI = 'mongodb+srv://hibronpluse:A3hq0n82ty2ZGKnd@cluster0.zhx1zl5.mongodb.net/taekwondo?retryWrites=true&w=majority&appName=Cluster0';
-
 /**
  * Connect to MongoDB with enhanced error handling and auto-reconnect
  * Modified for better cloud deployment support (like Render)
@@ -25,7 +22,7 @@ const connectDatabase = async () => {
   console.log(`Node.js version: ${process.version}`);
 
   try {
-    // Connection options for better reliability - removed deprecated options
+    // Connection options for better reliability
     const options = {
       serverSelectionTimeoutMS: 60000, // Increased to 60 seconds
       socketTimeoutMS: 60000, // Increased to 60 seconds
@@ -35,18 +32,16 @@ const connectDatabase = async () => {
       // Add retry options
       retryWrites: true,
       retryReads: true,
-      // Remove unsupported autoReconnect option
-      // Add connection pool monitoring
       monitorCommands: true
     };
     
     console.log('Initializing MongoDB connection...');
     
-    // Try to get MongoDB URI from environment variables or use Atlas fallback
-    const mongoURI = process.env.MONGO_URI || FALLBACK_MONGO_URI;
+    // Get MongoDB URI from environment variable
+    const mongoURI = process.env.MONGO_URI;
     
     if (!mongoURI) {
-      throw new Error('MongoDB URI not available - neither from environment variables nor fallback');
+      throw new Error('MongoDB URI not available - please set MONGO_URI environment variable');
     }
     
     // Mask the connection string for logging - fixed regex
