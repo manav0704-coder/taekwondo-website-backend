@@ -81,7 +81,7 @@ const corsOptions = {
     // Get allowed origins from environment variable or use defaults
     const allowedOrigins = process.env.CORS_ORIGINS ? 
       process.env.CORS_ORIGINS.split(',') : 
-      ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://0.0.0.0:3000', 'https://taekwondo-website-kdqm.vercel.app'];
+      ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://0.0.0.0:3000', 'https://taekwondo-website-kdqm.vercel.app', 'https://taekwondo-frontend-website.onrender.com'];
     
     console.log('CORS check for origin:', origin || 'no origin');
     

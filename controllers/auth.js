@@ -27,26 +27,43 @@ const sendEmail = async (options) => {
   try {
     console.log('Creating email transport');
     
-    // Use Gmail SMTP configuration
+    // Get email configuration from environment variables or use defaults
+    const emailHost = process.env.EMAIL_HOST || 'smtp.gmail.com';
+    const emailPort = parseInt(process.env.EMAIL_PORT || '587');
+    const emailUser = process.env.EMAIL_USER || 'hibronpluse@gmail.com';
+    const emailPass = process.env.EMAIL_PASS || 'rnduxuarkjxezhtw';
+    const emailFrom = process.env.EMAIL_FROM || 'Maharashtra Taekwondo Federation <hibronpluse@gmail.com>';
+    
+    // Use SMTP configuration with better error handling
     const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
+      host: emailHost,
+      port: emailPort,
+      secure: emailPort === 465, // true for 465, false for other ports
       auth: {
-        user: 'hibronpluse@gmail.com',
-        pass: 'rnduxuarkjxezhtw'
-      }
+        user: emailUser,
+        pass: emailPass
+      },
+      // Add timeout to prevent hanging connections
+      connectionTimeout: 10000,
+      // Enable STARTTLS for security
+      requireTLS: true,
+      // Increase logging for debugging
+      debug: process.env.NODE_ENV === 'development'
     });
 
-    console.log('Email transport created successfully');
+    // Verify connection configuration
+    await transporter.verify();
+    console.log('Email transport created and verified successfully');
 
     // Message options
     const mailOptions = {
-      from: 'Maharashtra Taekwondo Federation <hibronpluse@gmail.com>',
+      from: emailFrom,
       to: options.email,
       subject: options.subject,
       text: options.message,
-      html: options.html
+      html: options.html,
+      // Add priority header
+      priority: 'high'
     };
 
     console.log('Sending email to:', options.email);
@@ -514,7 +531,7 @@ exports.forgotPassword = async (req, res, next) => {
 
     console.log('User found, generating reset token');
     // Generate reset token
-    const resetToken = crypto.randomBytes(20).toString('hex');
+    const resetToken = crypto.randomBytes(32).toString('hex');
     
     // Hash the token and set expiry
     user.resetPasswordToken = crypto
@@ -522,7 +539,7 @@ exports.forgotPassword = async (req, res, next) => {
       .update(resetToken)
       .digest('hex');
       
-    user.resetPasswordExpire = Date.now() + 30 * 60 * 1000; // 30 minutes (increased from 15)
+    user.resetPasswordExpire = Date.now() + 60 * 60 * 1000; // 60 minutes (increased from 30)
     
     try {
       await user.save();
@@ -536,20 +553,90 @@ exports.forgotPassword = async (req, res, next) => {
     }
 
     // Create reset URL - use the actual frontend URL if available
-    const frontendURL = process.env.FRONTEND_URL || req.headers.origin || 'http://localhost:3000';
+    // First check headers for origin, then env var, then fallback
+    const origin = req.headers.origin || '';
+    const frontendURL = process.env.FRONTEND_URL || 
+                      (origin.includes('localhost') || origin.includes('127.0.0.1') ? 'http://localhost:3000' : origin) || 
+                      'https://taekwondo-website.onrender.com';
+                      
     const resetUrl = `${frontendURL}/reset-password/${resetToken}`;
     console.log('Reset URL created:', resetUrl);
     
-    // Create message
-    const message = `You are receiving this email because you (or someone else) has requested a password reset. Click the link below to reset your password:\n\n${resetUrl}\n\nThis link will expire in 30 minutes.\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
+    // Create message with better formatting
+    const message = `You are receiving this email because you (or someone else) has requested a password reset for your Maharashtra Taekwondo Federation account.
+
+Click the link below to reset your password:
+${resetUrl}
+
+This link will expire in 60 minutes.
+
+If you did not request this, please ignore this email and your password will remain unchanged.`;
     
-    // HTML version
+    // HTML version with better styling
     const html = `
-      <p>You are receiving this email because you (or someone else) has requested a password reset.</p>
-      <p>Click the button below to reset your password:</p>
-      <a href="${resetUrl}" style="display: inline-block; background-color: #FF5722; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; margin: 20px 0;">Reset Password</a>
-      <p>This link will expire in 30 minutes.</p>
-      <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { 
+          font-family: Arial, sans-serif;
+          line-height: 1.6;
+          color: #333;
+          max-width: 600px;
+          margin: 0 auto;
+        }
+        .container {
+          padding: 20px;
+          border: 1px solid #ddd;
+          border-radius: 5px;
+          background-color: #f9f9f9;
+        }
+        .button {
+          display: inline-block;
+          background-color: #FF5722;
+          color: white !important;
+          padding: 12px 24px;
+          text-decoration: none;
+          border-radius: 4px;
+          margin: 20px 0;
+          font-weight: bold;
+        }
+        .header {
+          background-color: #FF5722;
+          color: white;
+          padding: 10px;
+          text-align: center;
+          border-radius: 5px 5px 0 0;
+        }
+        .footer {
+          font-size: 12px;
+          color: #666;
+          margin-top: 20px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h2>Password Reset Request</h2>
+        </div>
+        <p>Hello,</p>
+        <p>You are receiving this email because you (or someone else) has requested a password reset for your Maharashtra Taekwondo Federation account.</p>
+        <p>Click the button below to reset your password:</p>
+        <p style="text-align: center;">
+          <a href="${resetUrl}" class="button">Reset Password</a>
+        </p>
+        <p>This link will expire in 60 minutes.</p>
+        <p>If you did not request this, please ignore this email and your password will remain unchanged.</p>
+        <p>If the button above doesn't work, copy and paste this URL into your browser:</p>
+        <p style="word-break: break-all;">${resetUrl}</p>
+        <div class="footer">
+          <p>&copy; ${new Date().getFullYear()} Maharashtra Taekwondo Federation. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
     `;
 
     try {
@@ -561,7 +648,7 @@ exports.forgotPassword = async (req, res, next) => {
       
       await sendEmail({
         email: user.email,
-        subject: 'Password Reset Request',
+        subject: 'Password Reset Request - Maharashtra Taekwondo Federation',
         message,
         html
       });
@@ -569,7 +656,7 @@ exports.forgotPassword = async (req, res, next) => {
       console.log('Password reset email sent successfully');
       res.status(200).json({
         success: true,
-        message: 'Password reset email sent'
+        message: 'Password reset email sent to your email address'
       });
     } catch (err) {
       console.error('Email sending failed:', err);
@@ -589,14 +676,15 @@ exports.forgotPassword = async (req, res, next) => {
       
       return res.status(500).json({
         success: false,
-        message: 'Email could not be sent. Please try again later.'
+        message: 'Email could not be sent. Please try again later or contact support.'
       });
     }
   } catch (error) {
     console.error('Forgot password error:', error);
     res.status(500).json({
       success: false,
-      message: error.message || 'Password reset failed'
+      message: 'Password reset request failed. Please try again later.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
