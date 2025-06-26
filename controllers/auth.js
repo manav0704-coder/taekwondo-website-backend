@@ -370,14 +370,14 @@ exports.googleAuth = async (req, res, next) => {
   console.log('Google auth request received', req.body.email ? { email: req.body.email } : 'No email provided');
   
   try {
-    const { name, email, googleId, photoURL } = req.body;
+    const { name, email, googleId, photoURL, idToken } = req.body;
 
     // Validate required fields
-    if (!email || !googleId) {
-      console.error('Google auth missing required fields:', { email: !!email, googleId: !!googleId });
+    if (!email || (!googleId && !idToken)) {
+      console.error('Google auth missing required fields:', { email: !!email, googleId: !!googleId, idToken: !!idToken });
       return res.status(400).json({
         success: false,
-        message: 'Please provide email and Google ID'
+        message: 'Please provide email and Google ID or token'
       });
     }
 
@@ -395,7 +395,7 @@ exports.googleAuth = async (req, res, next) => {
 
     if (user) {
       // If user exists but doesn't have googleId, update it
-      if (!user.googleId) {
+      if (!user.googleId && googleId) {
         console.log(`Google auth: Adding googleId to existing user ${user._id}`);
         user.googleId = googleId;
         user.photoURL = photoURL || user.photoURL;
@@ -485,6 +485,15 @@ exports.getMe = async (req, res, next) => {
 // @access  Private
 exports.logout = async (req, res, next) => {
   try {
+    const userId = req.user?.id;
+    
+    // Log the logout event
+    console.log(`User logout: ${userId || 'Unknown user'}`);
+    
+    // If using JWT blacklist or token invalidation, you could add that here
+    // For example, invalidate the current token by adding it to a blacklist
+    // Or update the user's tokenVersion in the database
+    
     // Clear cookie if using cookies for auth
     res.status(200).json({
       success: true,

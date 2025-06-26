@@ -69,49 +69,25 @@ app.use(async (req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Enhanced CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    // In development, allow any origin
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Development mode: allowing all origins for CORS');
-      return callback(null, true);
-    }
-    
-    // Get allowed origins from environment variable or use defaults
-    const allowedOrigins = process.env.CORS_ORIGINS ? 
-      process.env.CORS_ORIGINS.split(',') : 
-      ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://0.0.0.0:3000', 'https://taekwondo-website-kdqm.vercel.app', 'https://taekwondo-frontend-website.onrender.com'];
-    
-    console.log('CORS check for origin:', origin || 'no origin');
-    
-    // Allow requests with no origin (like mobile apps, curl requests)
-    if (!origin) {
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('localhost')) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked request from origin: ${origin}`);
-      // For troubleshooting, allow all origins but log the blocked ones
-      callback(null, true); 
-    }
-  },
+// Updated CORS configuration to fix authentication issues
+app.use(cors({
+  origin: '*', // Allow all origins temporarily for debugging
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept'],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   preflightContinue: false,
   optionsSuccessStatus: 204
-};
-
-app.use(cors(corsOptions));
+}));
 
 // Handle preflight requests
-app.options('*', cors(corsOptions));
+app.options('*', cors());
 
-app.use(helmet());
+// Disable helmet temporarily to fix CORS issues
+// app.use(helmet({
+//   crossOriginResourcePolicy: false,
+//   contentSecurityPolicy: false
+// }));
 app.use(morgan('dev'));
 
 // Add detailed request logging middleware
