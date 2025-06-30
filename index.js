@@ -84,10 +84,11 @@ app.use(cors({
 app.options('*', cors());
 
 // Disable helmet temporarily to fix CORS issues
-// app.use(helmet({
-//   crossOriginResourcePolicy: false,
-//   contentSecurityPolicy: false
-// }));
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  contentSecurityPolicy: false,
+  xRobotsTag: false // Allow search engine indexing
+}));
 app.use(morgan('dev'));
 
 // Add detailed request logging middleware
